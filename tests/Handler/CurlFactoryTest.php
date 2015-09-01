@@ -93,6 +93,16 @@ class CurlFactoryTest extends \PHPUnit_Framework_TestCase
         $this->assertEquals(10, $_SERVER['_curl'][CURLOPT_LOW_SPEED_LIMIT]);
     }
 
+    public function testCanChangeCurlOptions()
+    {
+        Server::flush();
+        Server::enqueue([new Psr7\Response()]);
+        $a = new Handler\CurlMultiHandler();
+        $req = new Psr7\Request('GET', Server::$url);
+        $a($req, ['curl' => [CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_0]]);
+        $this->assertEquals(CURL_HTTP_VERSION_1_0, $_SERVER['_curl'][CURLOPT_HTTP_VERSION]);
+    }
+
     /**
      * @expectedException \InvalidArgumentException
      * @expectedExceptionMessage SSL CA bundle not found: /does/not/exist
@@ -143,7 +153,30 @@ class CurlFactoryTest extends \PHPUnit_Framework_TestCase
             'proxy' => ['http' => 'http://bar.com', 'https' => 'https://t'],
         ]);
         $this->assertEquals('http://bar.com', $_SERVER['_curl'][CURLOPT_PROXY]);
+        $this->checkNoProxyForHost('http://test.test.com', ['test.test.com'], false);
+        $this->checkNoProxyForHost('http://test.test.com', ['.test.com'], false);
+        $this->checkNoProxyForHost('http://test.test.com', ['*.test.com'], true);
+        $this->checkNoProxyForHost('http://test.test.com', ['*'], false);
+        $this->checkNoProxyForHost('http://127.0.0.1', ['127.0.0.*'], true);
     }
+
+    private function checkNoProxyForHost($url, $noProxy, $assertUseProxy)
+    {
+        $f = new Handler\CurlFactory(3);
+        $f->create(new Psr7\Request('GET', $url), [
+            'proxy' => [
+                'http' => 'http://bar.com',
+                'https' => 'https://t',
+                'no' => $noProxy
+            ],
+        ]);
+        if ($assertUseProxy) {
+            $this->assertArrayHasKey(CURLOPT_PROXY, $_SERVER['_curl']);
+        } else {
+            $this->assertArrayNotHasKey(CURLOPT_PROXY, $_SERVER['_curl']);
+        }
+    }
+
 
     /**
      * @expectedException \InvalidArgumentException
@@ -276,6 +309,8 @@ class CurlFactoryTest extends \PHPUnit_Framework_TestCase
         $sent = Server::received()[0];
         $this->assertEquals('gzip', $sent->getHeaderLine('Accept-Encoding'));
         $this->assertEquals('test', (string) $response->getBody());
+        $this->assertFalse($response->hasHeader('content-encoding'));
+        $this->assertTrue(!$response->hasHeader('content-length') || $response->getHeaderLine('content-length') == $response->getBody()->getSize());
     }
 
     public function testDoesNotForceDecode()

@@ -1,11 +1,13 @@
 <?php
 namespace GuzzleHttp\Tests;
 
+use GuzzleHttp\Client;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
+use Psr\Http\Message\RequestInterface;
 
 /**
  * @covers GuzzleHttp\RedirectMiddleware
@@ -143,5 +145,59 @@ class RedirectMiddlewareTest extends \PHPUnit_Framework_TestCase
         ]);
         $promise->wait();
         $this->assertFalse($mock->getLastRequest()->hasHeader('Referer'));
+    }
+
+    public function testInvokesOnRedirectForRedirects()
+    {
+        $mock = new MockHandler([
+            new Response(302, ['Location' => 'http://test.com']),
+            new Response(200)
+        ]);
+        $stack = new HandlerStack($mock);
+        $stack->push(Middleware::redirect());
+        $handler = $stack->resolve();
+        $request = new Request('GET', 'http://example.com?a=b');
+        $call = false;
+        $promise = $handler($request, [
+            'allow_redirects' => [
+                'max' => 2,
+                'on_redirect' => function ($request, $response, $uri) use (&$call) {
+                    $this->assertEquals(302, $response->getStatusCode());
+                    $this->assertEquals('GET', $request->getMethod());
+                    $this->assertEquals('http://test.com', (string) $uri);
+                    $call = true;
+                }
+            ]
+        ]);
+        $promise->wait();
+        $this->assertTrue($call);
+    }
+
+    public function testRemoveAuthorizationHeaderOnRedirect()
+    {
+        $mock = new MockHandler([
+            new Response(302, ['Location' => 'http://test.com']),
+            function (RequestInterface $request) {
+                $this->assertFalse($request->hasHeader('Authorization'));
+                return new Response(200);
+            }
+        ]);
+        $handler = HandlerStack::create($mock);
+        $client = new Client(['handler' => $handler]);
+        $client->get('http://example.com?a=b', ['auth' => ['testuser', 'testpass']]);
+    }
+
+    public function testNotRemoveAuthorizationHeaderOnRedirect()
+    {
+        $mock = new MockHandler([
+            new Response(302, ['Location' => 'http://example.com/2']),
+            function (RequestInterface $request) {
+                $this->assertTrue($request->hasHeader('Authorization'));
+                return new Response(200);
+            }
+        ]);
+        $handler = HandlerStack::create($mock);
+        $client = new Client(['handler' => $handler]);
+        $client->get('http://example.com?a=b', ['auth' => ['testuser', 'testpass']]);
     }
 }

@@ -53,23 +53,44 @@ number of 5 redirects.
     echo $res->getStatusCode();
     // 200
 
-Pass an associative array containing the 'max' key to specify the maximum
-number of redirects, provide a 'strict' key value to specify whether or not to
-use strict RFC compliant redirects (meaning redirect POST requests with POST
-requests vs. doing what most browsers do which is redirect POST requests with
-GET requests), provide a 'referer' key to specify whether or not the "Referer"
-header should be added when redirecting, and provide a 'protocols' array that
-specifies which protocols are supported for redirects (defaults to
-``['http', 'https']``).
+You can also pass an associative array containing the following key value
+pairs:
+
+- max: (int, default=5) maximum number of allowed redirects.
+- strict: (bool, default=false) Set to true to use strict redirects.
+  Strict RFC compliant redirects mean that POST redirect requests are sent as
+  POST requests vs. doing what most browsers do which is redirect POST requests
+  with GET requests.
+- referer: (bool, default=true) Set to false to disable adding the Referer
+  header when redirecting.
+- protocols: (array, default=['http', 'https']) Specified which protocols are
+  allowed for redirect requests.
+- on_redirect: (callable) PHP callable that is invoked when a redirect
+  is encountered. The callable is invoked with the original request and the
+  redirect response that was received. Any return value from the on_redirect
+  function is ignored.
 
 .. code-block:: php
 
+    use Psr\Http\Message\RequestInterface;
+    use Psr\Http\Message\ResponseInterface;
+    use Psr\Http\Message\UriInterface;
+
+    $onRedirect = function(
+        RequestInterface $request,
+        ResponseInterface $response,
+        UriInterface $uri
+    ) {
+        echo 'Redirecting! ' . $request->getUri() . ' to ' . $uri . "\n";
+    }
+
     $res = $client->get('/redirect/3', [
         'allow_redirects' => [
-            'max'       => 10,       // allow at most 10 redirects.
-            'strict'    => true,     // use "strict" RFC compliant redirects.
-            'referer'   => true,     // add a Referer header
-            'protocols' => ['https'] // only allow https URLs
+            'max'         => 10,        // allow at most 10 redirects.
+            'strict'      => true,      // use "strict" RFC compliant redirects.
+            'referer'     => true,      // add a Referer header
+            'protocols'   => ['https'], // only allow https URLs
+            'on_redirect' => $onRedirect
         ]
     ]);
     echo $res->getStatusCode();
@@ -131,8 +152,7 @@ body
 :Types:
     - string
     - ``fopen()`` resource
-    - ``GuzzleHttp\Stream\StreamInterface``
-    - ``GuzzleHttp\Post\PostBodyInterface``
+    - ``Psr\Http\Message\StreamInterface``
 :Default: None
 :Constant: ``GuzzleHttp\RequestOptions::BODY``
 
@@ -153,7 +173,7 @@ This setting can be set to any of the following types:
       $resource = fopen('http://httpbin.org', 'r');
       $client->put('/put', ['body' => $resource]);
 
-- ``GuzzleHttp\Stream\StreamInterface``
+- ``Psr\Http\Message\StreamInterface``
 
   .. code-block:: php
 
@@ -382,6 +402,12 @@ present.
         ]
     ]);
 
+.. note::
+
+    ``form_params`` cannot be used with the ``multipart`` option. You will need to use
+    one or the other. Use ``form_params`` for ``application/x-www-form-urlencoded``
+    requests, and ``multipart`` for ``multipart/form-data`` requests.
+
 
 headers
 -------
@@ -478,11 +504,29 @@ json
 
 .. code-block:: php
 
-    $request = $client->createRequest('PUT', '/put', ['json' => ['foo' => 'bar']]);
-    echo $request->getHeader('Content-Type');
-    // application/json
-    echo $request->getBody();
-    // {"foo":"bar"}
+    $response = $client->put('/put', ['json' => ['foo' => 'bar']]);
+
+Here's an example of using the ``tap`` middleware to see what request is sent
+over the wire.
+
+.. code-block:: php
+
+    use GuzzleHttp\Middleware;
+
+    // Grab the client's handler instance.
+    $clientHandler = $client->getConfig('handler');
+    // Create a middleware that echoes parts of the request.
+    $tapMiddleware = Middleware::tap(function ($request) {
+        echo $request->getHeader('Content-Type');
+        // application/json
+        echo $request->getBody();
+        // {"foo":"bar"}
+    });
+
+    $response = $client->put('/put', [
+        'json'    => ['foo' => 'bar'],
+        'handler' => $tapMiddleware($clientHandler)
+    ]);
 
 .. note::
 
@@ -497,7 +541,7 @@ json
 multipart
 ---------
 
-:Summary: Sets the body of the request to a multipart/form-data form.
+:Summary: Sets the body of the request to a `multipart/form-data` form.
 :Types: array
 :Constant: ``GuzzleHttp\RequestOptions::MULTIPART``
 
@@ -531,6 +575,12 @@ the following key value pairs:
             ],
         ]
     ]);
+
+.. note::
+
+    ``multipart`` cannot be used with the ``form_params`` option. You will need to
+    use one or the other. Use ``form_params`` for ``application/x-www-form-urlencoded``
+    requests, and ``multipart`` for ``multipart/form-data`` requests.
 
 
 .. _on-headers:
@@ -588,14 +638,24 @@ Pass a string to specify a proxy for all protocols.
     $client->get('/', ['proxy' => 'tcp://localhost:8125']);
 
 Pass an associative array to specify HTTP proxies for specific URI schemes
-(i.e., "http", "https").
+(i.e., "http", "https"). Provide a ``no`` key value pair to provide a list of
+host names that should not be proxied to.
+
+.. note::
+
+    Guzzle will automatically populate this value with your environment's
+    ``NO_PROXY`` environment variable. However, when providing a ``proxy``
+    request option, it is up to your to provide the ``no`` value parsed from
+    the ``NO_PROXY`` environment variable
+    (e.g., ``explode(',', getenv('NO_PROXY'))``).
 
 .. code-block:: php
 
     $client->get('/', [
         'proxy' => [
             'http'  => 'tcp://localhost:8125', // Use this proxy with "http"
-            'https' => 'tcp://localhost:9124'  // Use this proxy with "https"
+            'https' => 'tcp://localhost:9124', // Use this proxy with "https",
+            'no' => ['.mit.edu', 'foo.com']    // Don't use a proxy with these
         ]
     ]);
 
@@ -830,6 +890,4 @@ version
 .. code-block:: php
 
     // Force HTTP/1.0
-    $request = $client->createRequest('GET', '/get', ['version' => 1.0]);
-    echo $request->getProtocolVersion();
-    // 1.0
+    $request = $client->get('/get', ['version' => 1.0]);

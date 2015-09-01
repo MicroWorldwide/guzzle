@@ -361,10 +361,11 @@ associative arrays, where each associative array contains the following keys:
 .. code-block:: php
 
     $response = $client->post('http://httpbin.org/post', [
-        'form_params' => [
-            'field_name' => 'abc',
-        ],
         'multipart' => [
+            [
+                'name'     => 'field_name',
+                'contents' => 'abc'
+            ],
             [
                 'name'     => 'file_name',
                 'contents' => fopen('/path/to/file', 'r')
@@ -463,7 +464,7 @@ Guzzle throws exceptions for errors that occur during a transfer.
   ``GuzzleHttp\Exception\RequestException``.
 
 - A ``GuzzleHttp\Exception\ClientException`` is thrown for 400
-  level errors if the ``exceptions`` request option is set to true. This
+  level errors if the ``http_errors`` request option is set to true. This
   exception extends from ``GuzzleHttp\Exception\BadResponseException`` and
   ``GuzzleHttp\Exception\BadResponseException`` extends from
   ``GuzzleHttp\Exception\RequestException``.
@@ -480,7 +481,7 @@ Guzzle throws exceptions for errors that occur during a transfer.
       }
 
 - A ``GuzzleHttp\Exception\ServerException`` is thrown for 500 level
-  errors if the ``exceptions`` request option is set to true. This
+  errors if the ``http_errors`` request option is set to true. This
   exception extends from ``GuzzleHttp\Exception\BadResponseException``.
 
 - A ``GuzzleHttp\Exception\TooManyRedirectsException`` is thrown when too

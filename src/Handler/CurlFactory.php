@@ -30,6 +30,11 @@ class CurlFactory implements CurlFactoryInterface
 
     public function create(RequestInterface $request, array $options)
     {
+        if (isset($options['curl']['body_as_string'])) {
+            $options['_body_as_string'] = $options['curl']['body_as_string'];
+            unset($options['curl']['body_as_string']);
+        }
+
         $easy = new EasyHandle;
         $easy->request = $request;
         $easy->options = $options;
@@ -39,14 +44,9 @@ class CurlFactory implements CurlFactoryInterface
         $this->applyHeaders($easy, $conf);
         unset($conf['_headers']);
 
-        if (isset($options['curl']['body_as_string'])) {
-            $options['_body_as_string'] = $options['curl']['body_as_string'];
-            unset($options['curl']['body_as_string']);
-        }
-
         // Add handler options from the request configuration options
         if (isset($options['curl'])) {
-            $conf += $options['curl'];
+            $conf = $options['curl'] + $conf;
         }
 
         $conf[CURLOPT_HEADERFUNCTION] = $this->createHeaderFn($easy);
@@ -66,6 +66,14 @@ class CurlFactory implements CurlFactoryInterface
         if (count($this->handles) >= $this->maxHandles) {
             curl_close($resource);
         } else {
+            // Remove all callback functions as they can hold onto references
+            // and are not cleaned up by curl_reset. Using curl_setopt_array
+            // does not work for some reason, so removing each one
+            // individually.
+            curl_setopt($resource, CURLOPT_HEADERFUNCTION, null);
+            curl_setopt($resource, CURLOPT_READFUNCTION, null);
+            curl_setopt($resource, CURLOPT_WRITEFUNCTION, null);
+            curl_setopt($resource, CURLOPT_PROGRESSFUNCTION, null);
             curl_reset($resource);
             $this->handles[] = $resource;
         }
@@ -109,9 +117,8 @@ class CurlFactory implements CurlFactoryInterface
     ) {
         // Get error information and release the handle to the factory.
         $ctx = [
-            'errno'  => $easy->errno,
-            'error' => curl_error($easy->handle)
-                ?: curl_strerror($easy->errno)
+            'errno' => $easy->errno,
+            'error' => curl_error($easy->handle),
         ] + curl_getinfo($easy->handle);
         $factory->release($easy);
 
@@ -173,8 +180,11 @@ class CurlFactory implements CurlFactoryInterface
             CURLOPT_RETURNTRANSFER => false,
             CURLOPT_HEADER         => false,
             CURLOPT_CONNECTTIMEOUT => 150,
-            CURLOPT_PROTOCOLS      => CURLPROTO_HTTP | CURLPROTO_HTTPS,
         ];
+
+        if (defined('CURLOPT_PROTOCOLS')) {
+            $conf[CURLOPT_PROTOCOLS] = CURLPROTO_HTTP | CURLPROTO_HTTPS;
+        }
 
         $version = $easy->request->getProtocolVersion();
         if ($version == 1.1) {
@@ -351,9 +361,15 @@ class CurlFactory implements CurlFactoryInterface
         if (isset($options['proxy'])) {
             if (!is_array($options['proxy'])) {
                 $conf[CURLOPT_PROXY] = $options['proxy'];
-            } elseif ($scheme = $easy->request->getUri()->getScheme()) {
+            } else {
+                $scheme = $easy->request->getUri()->getScheme();
                 if (isset($options['proxy'][$scheme])) {
-                    $conf[CURLOPT_PROXY] = $options['proxy'][$scheme];
+                    $host = $easy->request->getUri()->getHost();
+                    if (!isset($options['proxy']['no']) ||
+                        !\GuzzleHttp\is_host_in_noproxy($host, $options['proxy']['no'])
+                    ) {
+                        $conf[CURLOPT_PROXY] = $options['proxy'][$scheme];
+                    }
                 }
             }
         }

@@ -65,7 +65,7 @@ class MockHandlerTest extends \PHPUnit_Framework_TestCase
     public function testCanEnqueueCallables()
     {
         $r = new Response();
-        $fn = function ($r, $o) use ($r) { return $r; };
+        $fn = function ($req, $o) use ($r) { return $r; };
         $mock = new MockHandler([$fn]);
         $request = new Request('GET', 'http://example.com');
         $p = $mock($request, ['foo' => 'bar']);
@@ -101,5 +101,16 @@ class MockHandlerTest extends \PHPUnit_Framework_TestCase
         $mock = new MockHandler();
         $request = new Request('GET', 'http://example.com');
         $mock($request, []);
+    }
+
+    /**
+     * @expectedException \GuzzleHttp\Exception\BadResponseException
+     */
+    public function testCanCreateWithDefaultMiddleware()
+    {
+        $r = new Response(500);
+        $mock = MockHandler::createWithMiddleware([$r]);
+        $request = new Request('GET', 'http://example.com');
+        $mock($request, ['http_errors' => true])->wait();
     }
 }

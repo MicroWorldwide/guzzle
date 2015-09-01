@@ -8,6 +8,7 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Psr7;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
+use GuzzleHttp\Psr7\Uri;
 
 class ClientTest extends \PHPUnit_Framework_TestCase
 {
@@ -79,6 +80,20 @@ class ClientTest extends \PHPUnit_Framework_TestCase
         $this->assertEquals(
             'http://foo.com/bar/baz',
             $mock->getLastRequest()->getUri()
+        );
+    }
+
+    public function testCanMergeOnBaseUriWithRequest()
+    {
+        $mock = new MockHandler([new Response()]);
+        $client = new Client([
+            'handler'  => $mock,
+            'base_uri' => 'http://foo.com/bar/'
+        ]);
+        $client->request('GET', new Uri('baz'));
+        $this->assertEquals(
+            'http://foo.com/bar/baz',
+            (string) $mock->getLastRequest()->getUri()
         );
     }
 
@@ -395,6 +410,39 @@ class ClientTest extends \PHPUnit_Framework_TestCase
         );
     }
 
+    public function testFormParamsEncodedProperly()
+    {
+        $separator = ini_get('arg_separator.output');
+        ini_set('arg_separator.output', '&amp;');
+        $mock = new MockHandler([new Response()]);
+        $client = new Client(['handler' => $mock]);
+        $client->post('http://foo.com', [
+            'form_params' => [
+                'foo' => 'bar bam',
+                'baz' => ['boo' => 'qux']
+            ]
+        ]);
+        $last = $mock->getLastRequest();
+        $this->assertEquals(
+            'foo=bar+bam&baz%5Bboo%5D=qux',
+            (string) $last->getBody()
+        );
+
+        ini_set('arg_separator.output', $separator);
+    }
+
+    /**
+     * @expectedException \InvalidArgumentException
+     */
+    public function testEnsuresThatFormParamsAndMultipartAreExclusive()
+    {
+        $client = new Client(['handler' => function () {}]);
+        $client->post('http://foo.com', [
+            'form_params' => ['foo' => 'bar bam'],
+            'multipart' => []
+        ]);
+    }
+
     public function testCanSendMultipart()
     {
         $mock = new MockHandler([new Response()]);
@@ -434,10 +482,57 @@ class ClientTest extends \PHPUnit_Framework_TestCase
         );
     }
 
+    public function testCanSendMultipartWithExplicitBody()
+    {
+        $mock = new MockHandler([new Response()]);
+        $client = new Client(['handler' => $mock]);
+        $client->send(
+            new Request(
+                'POST',
+                'http://foo.com',
+                [],
+                new Psr7\MultipartStream(
+                    [
+                        [
+                            'name' => 'foo',
+                            'contents' => 'bar',
+                        ],
+                        [
+                            'name' => 'test',
+                            'contents' => fopen(__FILE__, 'r'),
+                        ],
+                    ]
+                )
+            )
+        );
+
+        $last = $mock->getLastRequest();
+        $this->assertContains(
+            'multipart/form-data; boundary=',
+            $last->getHeaderLine('Content-Type')
+        );
+
+        $this->assertContains(
+            'Content-Disposition: form-data; name="foo"',
+            (string) $last->getBody()
+        );
+
+        $this->assertContains('bar', (string) $last->getBody());
+        $this->assertContains(
+            'Content-Disposition: form-data; name="foo"' . "\r\n",
+            (string) $last->getBody()
+        );
+        $this->assertContains(
+            'Content-Disposition: form-data; name="test"; filename="ClientTest.php"',
+            (string) $last->getBody()
+        );
+    }
+
     public function testUsesProxyEnvironmentVariables()
     {
         $http = getenv('HTTP_PROXY');
         $https = getenv('HTTPS_PROXY');
+        $no = getenv('NO_PROXY');
         $client = new Client();
         $this->assertNull($client->getConfig('proxy'));
         putenv('HTTP_PROXY=127.0.0.1');
@@ -447,13 +542,15 @@ class ClientTest extends \PHPUnit_Framework_TestCase
             $client->getConfig('proxy')
         );
         putenv('HTTPS_PROXY=127.0.0.2');
+        putenv('NO_PROXY=127.0.0.3, 127.0.0.4');
         $client = new Client();
         $this->assertEquals(
-            ['http' => '127.0.0.1', 'https' => '127.0.0.2'],
+            ['http' => '127.0.0.1', 'https' => '127.0.0.2', 'no' => ['127.0.0.3','127.0.0.4']],
             $client->getConfig('proxy')
         );
         putenv("HTTP_PROXY=$http");
         putenv("HTTPS_PROXY=$https");
+        putenv("NO_PROXY=$no");
     }
 
     public function testRequestSendsWithSync()

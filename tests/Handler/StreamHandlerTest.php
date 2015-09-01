@@ -139,6 +139,8 @@ class StreamHandlerTest extends \PHPUnit_Framework_TestCase
         $request = new Request('GET', Server::$url);
         $response = $handler($request, ['decode_content' => true])->wait();
         $this->assertEquals('test', (string) $response->getBody());
+        $this->assertFalse($response->hasHeader('content-encoding'));
+        $this->assertTrue(!$response->hasHeader('content-length') || $response->getHeaderLine('content-length') == $response->getBody()->getSize());
     }
 
     public function testDoesNotForceGzipDecode()
@@ -155,6 +157,8 @@ class StreamHandlerTest extends \PHPUnit_Framework_TestCase
         $request = new Request('GET', Server::$url);
         $response = $handler($request, ['decode_content' => false])->wait();
         $this->assertSame($content, (string) $response->getBody());
+        $this->assertEquals('gzip', $response->getHeaderLine('content-encoding'));
+        $this->assertEquals(strlen($content), $response->getHeaderLine('content-length'));
     }
 
     public function testProtocolVersion()
@@ -190,6 +194,17 @@ class StreamHandlerTest extends \PHPUnit_Framework_TestCase
         $res = $this->getSendResult(['proxy' => ['http' => $url]]);
         $opts = stream_context_get_options($res->getBody()->detach());
         $this->assertEquals($url, $opts['http']['proxy']);
+    }
+
+    public function testAddsProxyButHonorsNoProxy()
+    {
+        $url = str_replace('http', 'tcp', Server::$url);
+        $res = $this->getSendResult(['proxy' => [
+            'http' => $url,
+            'no'   => ['*']
+        ]]);
+        $opts = stream_context_get_options($res->getBody()->detach());
+        $this->assertTrue(empty($opts['http']['proxy']));
     }
 
     public function testAddsTimeout()
@@ -363,6 +378,26 @@ class StreamHandlerTest extends \PHPUnit_Framework_TestCase
         $req = Server::received()[0];
         $this->assertEquals('', $req->getHeaderLine('Content-Type'));
         $this->assertEquals(3, $req->getHeaderLine('Content-Length'));
+    }
+
+    public function testAddsContentLengthByDefault()
+    {
+        $this->queueRes();
+        $handler = new StreamHandler();
+        $request = new Request('PUT', Server::$url, [], 'foo');
+        $handler($request, []);
+        $req = Server::received()[0];
+        $this->assertEquals(3, $req->getHeaderLine('Content-Length'));
+    }
+
+    public function testAddsContentLengthEvenWhenEmpty()
+    {
+        $this->queueRes();
+        $handler = new StreamHandler();
+        $request = new Request('PUT', Server::$url, [], '');
+        $handler($request, []);
+        $req = Server::received()[0];
+        $this->assertEquals(0, $req->getHeaderLine('Content-Length'));
     }
 
     public function testSupports100Continue()
